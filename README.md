@@ -2,11 +2,14 @@
 Implement conjugate gradient with MPI (with MKL/ without MKL) using CPP
   
   
-# Files  
+# Files 
+<pre>
 ./  
 | main.cpp  
 | cg.cpp  
 | all.h  
 |  
+</pre> 
+
 
 
