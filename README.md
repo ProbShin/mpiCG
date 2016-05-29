@@ -11,4 +11,10 @@ Implement conjugate gradient with MPI (with MKL/ without MKL) using CPP
 </pre> 
 
 
+$source mc.defs
+$vim main.cpp
+$make clean
+$make
+$run.sh
+
 

@@ -1,9 +1,3 @@
-/*************************************************************************
-    > File Name: main.cpp
-    > Author: Shin Cheng
-    > Descriptions: 
-    > Created Time: Mon May 16 12:22:57 2016
- ************************************************************************/
 
 #include<iostream>
 #include<cstdio>     /* stderr */
@@ -27,7 +21,7 @@ using namespace std;
 #define FILEA_READER_ID  ROOT_ID
 #define FILEB_READER_ID  ROOT_ID
 
-#define MAX_ITER 1000 
+#define MAX_ITER 100000 
 
 
 #define ACRED     "\x1b[31m"
@@ -45,38 +39,13 @@ bool check_head_dense (FILE* fp, int &m, int &n          );
 void check_head_show  (FILE* fp);
 
 
-//====================================
-// solve Ax=b with CG 
-// 
-//
-//
-//=====================================
+//============Solve Ax=b using parallel CG========================//
 void myCG(int n, double* vrr, int* colind, int* rbegin, double *b, double*xout,  int rank, int nproc ){
-  
-
-  if(rank==3){
-    printf("\nb%d in CG: ",rank);
-    for(int i=0;i<4;i++)
-      printf("%f ", b[i]);
-    printf("\n");
-  }
-  //if(rank==0){
-  //  printf("\n\n\n");
-  //  printf(ACRED"Rank%dIN CG"ACRESET"\n", rank);
-  //  printf("n%d\n",n);
-  //  for(int i=0 ;
-
-
-
-  
-  
-  
-  
-  
   int np = n/nproc;
   int i,j,k,l;
   int counter=0;
-  
+  double j_total, j_start, j_end;
+  j_total = 0;
   double *p_loc =  new double[np];
   double *p = new double[n ];
   
@@ -96,83 +65,27 @@ void myCG(int n, double* vrr, int* colind, int* rbegin, double *b, double*xout, 
   for(int i=0; i<np; i++){
     x[i]=0; ap[i]=0;
     r[i]=b[i];
-    //p[offset+i]=r[i];
-    p_loc[   i]=r[i];
+    p_loc[i]=r[i];
     rnorm+=r[i]*r[i];
     if(fabs(r[i])>maxnorm) {
       maxnorm = fabs(r[i]);
     }
   }
 
-
-
- // if(rank==0)
- //   printf("np%d",np);
-  ////if(rank==0){
-  ////  printf("b:");
-  ////  for(i=0; i<=n; i++)
-  ////    printf("%f\n",b[i]);
- ////   printf("\n");
- ////   printf("maxnorm=%f ", maxnorm);
- ////   printf("rnorm=%f ", rnorm);
- ////   printf("\n");
- ////  sleep(5);
- // }
- ////MPI_Barrier(MPI_COMM_WORLD);
- 
-  ////if(rank==6){
-   //// printf("hello:");
-  ////  for(int i=0; i<np; i++)
-  ////    printf("%f ", p_loc[i]);
- ////   
-  ////  printf("wocao: %d", np);
-  ////  
-  ///  
-////    sleep(5);
-////  }
-
-  if(rank==1){
-    printf("\nwocaoL135 p_loc=%f ", p_loc[0]);
-    printf("%f ", p_loc[1]);
-    printf("%f ", p_loc[2]);
-    printf("%f \n", p_loc[3]);
-  }
   MPI_Allgather(p_loc, np, MPI_DOUBLE, p, np, MPI_DOUBLE, MPI_COMM_WORLD);
-
-  if(rank==6){
-    printf("after all gather p: ");
-  for(int i=0;i<n; i++)
-    printf("%f ",p[i]);
-  printf("\n");
-  }
-  
 
   double xc=rnorm; 
   rnorm=0;
   MPI_Allreduce(&xc, &rnorm, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-
- 
   
   xc = maxnorm;
   MPI_Allreduce(&xc, &maxnorm, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
- 
-
-  if(rank==6)
-     printf("\nwocao rnorm[0]%f,... maxnorm[s]%f\n", rnorm, maxnorm);
-
-  //if(rank==0){
-  //  printf("hello:get %f %f\n", rnorm, xc);
-  //  sleep(10);
-  //}
-  //MPI_Barrier(MPI_COMM_WORLD);
-
- 
-  
   
   int iter=0;
   while((maxnorm>1e-6) && (iter<MAX_ITER)){
     pap = 0;
     //mat vec
+    j_start = omp_get_wtime();
     for(i=0; i<np; i++){
       ap[i]=0;
       for(j=rbegin[i+offset]; j<rbegin[i+1+offset]; j++){
@@ -182,6 +95,10 @@ void myCG(int n, double* vrr, int* colind, int* rbegin, double *b, double*xout, 
       pap+=p[offset+i]*ap[i];
     }
     xc = pap;
+    
+    j_end = omp_get_wtime();
+    j_total+= j_end- j_start;
+    
     MPI_Allreduce(&xc, &pap, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     alpha = rnorm/pap;
     beta  = rnorm; 
@@ -204,17 +121,16 @@ void myCG(int n, double* vrr, int* colind, int* rbegin, double *b, double*xout, 
       p_loc[i]=r[i]+beta*p_loc[i];
     }
     
-    
-    
-    //MPI_Allgather(&p[rank*np], np, MPI_DOUBLE, p, np, MPI_DOUBLE, MPI_COMM_WORLD);
     MPI_Allgather(p_loc , np, MPI_DOUBLE, p, np, MPI_DOUBLE, MPI_COMM_WORLD);
     iter ++;
   }//END OF WHILE
   printf("Process %d  counter=%d, iter=%d, maxnorm=%.01f\n", rank, counter, iter, maxnorm);
-  
 
   MPI_Gather(x, np, MPI_DOUBLE, xout, np, MPI_DOUBLE, ROOT_ID, MPI_COMM_WORLD);
 
+
+
+  printf("total matvec time %f\n", j_total);
 
   delete []x;
   delete []r;
@@ -235,10 +151,12 @@ void myCG(int n, double* vrr, int* colind, int* rbegin, double *b, double*xout, 
 int main(int argc, char const *argv[]){
   int nproc, rank;
   double rtime;
-
+  double j_start, j_end, j_total = 0.0;
   MPI_Init(&argc, (char***) &argv);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &nproc);
+
+  
 
   if( argc!=4 ){
     if(rank==ROOT_ID)
@@ -285,7 +203,6 @@ int main(int argc, char const *argv[]){
     annz=0;
     for(int i=0; i<tnnz; i++){
       fscanf(f1, "%d %d %lf\n", &r, &c, &v);
-      printf("%d %d %lf\n", r, c,v);
       r--; c--;
       if(r==c){
         nodelist[c].push_back(r);
@@ -303,19 +220,6 @@ int main(int argc, char const *argv[]){
       }
     }
 
-
-    //printf("\nnodelist sizes: ");
-    //for(int i=0; i<m+1; i++)
-    //  printf("%d ",nodelist[i].size());
-   
-    //printf("\n nodelist %d:", nodelist.size());
-    //for(int j=0; j<nodelist.size(); j++)
-    //  for(int i=0; i<nodelist[j].size(); i++)
-    //    cout<<valulist[j][i]<<" ";
-        
-    
-    //printf("end\n");
-    
     //now construct the graph
     avrr   = new double[annz];
     colind = new int   [annz];
@@ -347,19 +251,16 @@ int main(int argc, char const *argv[]){
     brr  = new double[mrhs]; 
 
     if(rank==FILEB_READER_ID) {
-      for(int i=0; i<m; i++) {
+      for(int i=0; i<mrhs; i++) {
         fscanf(f2, "%lf\n", brr+i);
-        printf("_%f ",brr[i]);
       }
     }
   }
 
 
-  
   MPI_Bcast(&m,    1, MPI_INT, FILEA_READER_ID, MPI_COMM_WORLD);
   MPI_Bcast(&mrhs, 1, MPI_INT, FILEB_READER_ID, MPI_COMM_WORLD);
   MPI_Bcast(&annz, 1, MPI_INT, ROOT_ID, MPI_COMM_WORLD);
-
 
   mp = m/nproc;
   if(m!=mrhs) exit(3);
@@ -370,39 +271,6 @@ int main(int argc, char const *argv[]){
   if(rbegin==NULL) rbegin= new int [m+1 ];
   if(xrr ==NULL  )    xrr= new double[m];
 
-
-  //if(rank==FILEA_READER_ID){
-  //  //from sparse symmetic => crs
-  //  int r,c;  
-  //  int j=0,rpre =-1;
-  //  for(int i=0; i<annz;i++){
-  //    fscanf(f1, "%d %d %lf\n", &c, &r, avrr+i); //i->j j->i
-  //    //printf("%d %d %f\n", c, r, avrr[i]);
-  //    colind[i]=c-base;
-  //    if(r!=rpre){
-  //      rbegin[j++]=i;
-  //      rpre=r;
-  //    }
-  //  }
-  //  rbegin[j++]=annz;
-  //  
-  //  
-  //  //printf("rbeg: ");
-  //  //for(int i=0; i<=m; i++)
-  //  //  printf("%d ", rbegin[i]);
-  //  //printf("\ncolindx: ");
-  //  //for(int i=0; i<annz; i++)
-  //  //  printf("(%d,%f)",colind[i], avrr[i]);
-  //
-  //  //rbegin[j++]=annz;
-  //  //for(int i=0; i<annz; i++){
-  //  //  fscanf(f1,"%d %d %lf\n", airr+i, ajrr+i, avrr+i);
-  //  //}
-  //}
-  //if(rank==FILEB_READER_ID) {
-  //  for(int i=0; i<m; i++)
-  //    fscanf(f2, "%lf\n", brr+i);  
-  //}
 
   MPI_Bcast  (avrr,   annz, MPI_DOUBLE, ROOT_ID, MPI_COMM_WORLD);
   MPI_Bcast  (colind, annz, MPI_INT,    ROOT_ID, MPI_COMM_WORLD);
@@ -416,87 +284,22 @@ int main(int argc, char const *argv[]){
   }
 
 
-
- // MPI_Barrier(MPI_COMM_WORLD);
-  if(0 && rank==0){
-    printf("PROCESS %d", rank);
-    printf("\nm:%d",m);
-    printf("\nnnz:%d",annz);
-    printf("\nrbegin:==");
-    for(int i=0;i<m+1; i++){
-      printf("%d ", rbegin[i]);
-    }
-    printf("\ncolind:==");
-    for(int i=0;i<annz; i++){
-      printf("%d ", colind[i]);
-    }
-    printf("\navrr:==");
-    for(int i=0;i<annz; i++) {
-      printf("%f ", avrr[i] );
-    }
-    printf("\nwocao:==\n");
-    for(int i=0; i<m; i++){
-      printf("row%d:",i+1);
-      for(int j=rbegin[i]; j<rbegin[i+1]; j++)
-        printf("(%d,%f) ", colind[j]+1, avrr[j]);
-    }
-    printf("\nb:==");
-    for(int i=0;i<mp; i++){
-      printf("%f ", b[i]);
-    }
-    //sleep(5);
-  }
- // MPI_Barrier(MPI_COMM_WORLD);
-
-
-
   myCG(m, avrr, colind, rbegin, b, xrr, rank, nproc);
 
-
-  if(0 && rank==0){
-    printf("\nP%d avrr: ",rank);
-    for(int i=0; i<annz; i++)
-      fprintf(stdout, "%f ", avrr[i]);
-
-    printf("\nP%d colind: ",rank);
-    for(int i=0; i<annz; i++)
-      fprintf(stdout, "%d ", colind[i]);
-
-    printf("\nP%d rbegin: ",rank);
-    for(int i=0; i<=m; i++)
-      fprintf(stdout, "%d ", rbegin[i]);
-
-    //printf("\nP%d brr: ",rank);
-    //for(int i=0; i<m; i++)
-    //  fprintf(stdout, "%f ", brr[i]);
-
-    printf("\nP%d b: ",rank);
-    for(int i=0; i<mp; i++)
-      fprintf(stdout, "%f ", b[i]);
-
-    sleep(10);
-  }
-
-
-  if(rank==ROOT_ID)
-    fprintf(stdout,"time %f\n",-(rtime-=omp_get_wtime()));
-
-
-
-  MPI_Barrier(MPI_COMM_WORLD);  
-
   if(rank==ROOT_ID){
-    printf("the result are:\n");
-    for(int i=0; i<m; i++)
-      fprintf(stdout, "%f ", xrr[i]);
-    printf("\n"); 
+    fprintf(stdout,"time %f\n",-(rtime-=omp_get_wtime()));
   }
+
+  //if(rank==ROOT_ID){
+  //  printf("the result are:\n");
+  //  for(int i=0; i<m; i++)
+  //    fprintf(stdout, "%f ", xrr[i]);
+  //  printf("\n"); 
+  //}
 
 
   MPI_Finalize();
 
-  //delete[] airr;
-  //delete[] ajrr;
   delete[] colind;
   delete[] rbegin;
   delete[] avrr;

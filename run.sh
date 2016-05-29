@@ -17,6 +17,9 @@
 #mpirun -np 8  -f ./myhost -perhost 1 -genv I_MPI_DEVICE=ssm  -genv OMP_NUM_THREADS 8 ./mycg ./A_32.mtx ./b_32.mtx ./mysolution.mtx 
 
 
-mpirun -np 8  -f ./myhost -perhost 1 -genv I_MPI_DEVICE=ssm  -genv OMP_NUM_THREADS 8 ./mycg ./A_10000.mtx ./b_10000.mtx ./mysolution.mtx 
+#mpirun -np 8  -f ./myhost -perhost 1 -genv I_MPI_DEVICE=ssm  -genv OMP_NUM_THREADS 8 ./mycg ./A_10000.mtx ./b_10000.mtx ./mysolution.mtx 
+
+
+mpirun -np 8 -f ./myhost -perhost 1 -genv I_MPI_DEVICE=ssm  -genv OMP_NUM_THREADS 8 ./mycg ../../flan/flan_orig/flan.mtx ./b_flan.mtx ./mysolution.mtx 
 
 
