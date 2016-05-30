@@ -18,8 +18,8 @@ using namespace std;
 
 
 #define ROOT_ID   0
-#define FILEA_READER_ID  ROOT_ID
-#define FILEB_READER_ID  ROOT_ID
+#define FILE_A_READER_ID  ROOT_ID
+#define FILE_B_READER_ID  ROOT_ID
 
 #define MAX_ITER 100000 
 
@@ -41,6 +41,8 @@ void check_head_show  (FILE* fp);
 
 //============Solve Ax=b using parallel CG========================//
 void myCG(int n, double* vrr, int* colind, int* rbegin, double *b, double*xout,  int rank, int nproc ){
+  double t1,t2,t3,t4,t5;
+  
   int np = n/nproc;
   int i,j,k,l;
   int counter=0;
@@ -61,7 +63,7 @@ void myCG(int n, double* vrr, int* colind, int* rbegin, double *b, double*xout, 
   double tmp   = 0;
   double maxnorm=0;
   int offset = rank*np;
-
+  
   for(int i=0; i<np; i++){
     x[i]=0; ap[i]=0;
     r[i]=b[i];
@@ -80,7 +82,7 @@ void myCG(int n, double* vrr, int* colind, int* rbegin, double *b, double*xout, 
   
   xc = maxnorm;
   MPI_Allreduce(&xc, &maxnorm, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-  
+
   int iter=0;
   while((maxnorm>1e-6) && (iter<MAX_ITER)){
     pap = 0;
@@ -124,12 +126,11 @@ void myCG(int n, double* vrr, int* colind, int* rbegin, double *b, double*xout, 
     MPI_Allgather(p_loc , np, MPI_DOUBLE, p, np, MPI_DOUBLE, MPI_COMM_WORLD);
     iter ++;
   }//END OF WHILE
-  printf("Process %d  counter=%d, iter=%d, maxnorm=%.01f\n", rank, counter, iter, maxnorm);
-
+  
   MPI_Gather(x, np, MPI_DOUBLE, xout, np, MPI_DOUBLE, ROOT_ID, MPI_COMM_WORLD);
 
-
-
+  printf("rank%d t1=%f t2=%f t3=%f t4=%f t5=%f\n",rank, -t1,-t2,-t3,-t4,-t5);
+  printf("Process %d  counter=%d, iter=%d(max%d), maxnorm=%.01f\n", rank, counter, iter, MAX_ITER, maxnorm);
   printf("total matvec time %f\n", j_total);
 
   delete []x;
@@ -166,21 +167,21 @@ int main(int argc, char const *argv[]){
 
   }
 
-  int    *colind=NULL; //new int [annz];
-  int    *rbegin=NULL; //new int [m+1];
-  double *avrr  =NULL;  
+  int    *colind=NULL; //new int [annz];   for csr
+  int    *rbegin=NULL; //new int [m+1];    for csr
+  double *avrr  =NULL; //new double[annz]; for csr
   
-  double *brr   =NULL;
-  double *b     =NULL;              //local b
+  double *brr   =NULL; //new double[m];    b
+  double *b     =NULL; //new double[m/p]   local b
   
-  double *xrr   =NULL;    //*&xrr   = brr;
-  int m, annz, mrhs;
-  int mp;                 //m/p -> mm
+  double *xrr   =NULL; //*&xrr = brr ;     x
+  int m, annz, mrhs;   //mtx size; actual nnz; number of right hand sides
+  int mp;              //m/p -> mm
 
   FILE *f1 = NULL;
   FILE *f2 = NULL;
 
-  if(rank==FILEA_READER_ID)
+  if(rank==FILE_A_READER_ID)
   {
     int tn, tnnz;
     f1 = fopen(argv[1], "r");
@@ -236,9 +237,9 @@ int main(int argc, char const *argv[]){
       }
     }
 
-  }
+  } //end of file a read
 
-  if(rank==FILEB_READER_ID)
+  if(rank==FILE_B_READER_ID)
   {
     f2 = fopen(argv[2], "r");
     int tn;
@@ -250,16 +251,14 @@ int main(int argc, char const *argv[]){
     }
     brr  = new double[mrhs]; 
 
-    if(rank==FILEB_READER_ID) {
-      for(int i=0; i<mrhs; i++) {
-        fscanf(f2, "%lf\n", brr+i);
-      }
+    for(int i=0; i<mrhs; i++) {
+      fscanf(f2, "%lf\n", brr+i);
     }
   }
 
 
-  MPI_Bcast(&m,    1, MPI_INT, FILEA_READER_ID, MPI_COMM_WORLD);
-  MPI_Bcast(&mrhs, 1, MPI_INT, FILEB_READER_ID, MPI_COMM_WORLD);
+  MPI_Bcast(&m,    1, MPI_INT, FILE_A_READER_ID, MPI_COMM_WORLD);
+  MPI_Bcast(&mrhs, 1, MPI_INT, FILE_B_READER_ID, MPI_COMM_WORLD);
   MPI_Bcast(&annz, 1, MPI_INT, ROOT_ID, MPI_COMM_WORLD);
 
   mp = m/nproc;
@@ -271,24 +270,23 @@ int main(int argc, char const *argv[]){
   if(rbegin==NULL) rbegin= new int [m+1 ];
   if(xrr ==NULL  )    xrr= new double[m];
 
-
+  //broadcast matrix A
   MPI_Bcast  (avrr,   annz, MPI_DOUBLE, ROOT_ID, MPI_COMM_WORLD);
   MPI_Bcast  (colind, annz, MPI_INT,    ROOT_ID, MPI_COMM_WORLD);
   MPI_Bcast  (rbegin, m+1 , MPI_INT,    ROOT_ID, MPI_COMM_WORLD);
-  
-  MPI_Scatter(brr, mp, MPI_DOUBLE, b, mp, MPI_DOUBLE, FILEB_READER_ID, MPI_COMM_WORLD);
 
-  if(rank==ROOT_ID){
-    rtime = omp_get_wtime();
-    fprintf(stdout,"start count\n");
-  }
+  //scatter right hand side b
+  MPI_Scatter(brr, mp, MPI_DOUBLE, b, mp, MPI_DOUBLE, FILE_B_READER_ID, MPI_COMM_WORLD);
 
+  printf("rank%d arrived\n", rank);
+  MPI_Barrier(MPI_COMM_WORLD);
+  if(rank==ROOT_ID)
+    fprintf(stdout,"start count, line%0.0f\n", rtime=omp_get_wtime() );
 
   myCG(m, avrr, colind, rbegin, b, xrr, rank, nproc);
 
-  if(rank==ROOT_ID){
+  if(rank==ROOT_ID)
     fprintf(stdout,"time %f\n",-(rtime-=omp_get_wtime()));
-  }
 
   //if(rank==ROOT_ID){
   //  printf("the result are:\n");
