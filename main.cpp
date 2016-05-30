@@ -32,7 +32,7 @@ using namespace std;
 #define ACCYAN    "\x1b[36m"
 #define ACRESET   "\x1b[0m"
 
-
+#define cxTMP 2
 
 bool check_head_sparse(FILE* fp, int &m, int &n, int&nnz );
 bool check_head_dense (FILE* fp, int &m, int &n          );
@@ -40,102 +40,153 @@ void check_head_show  (FILE* fp);
 
 
 //============Solve Ax=b using parallel CG========================//
-void myCG(int n, double* vrr, int* colind, int* rbegin, double *b, double*xout,  int rank, int nproc ){
+void myCG(int n, double* vrr, int* colind, int* rbegin, double *b_loc, double*x_loc,  int rank, int nproc ){
   double t1,t2,t3,t4,t5;
   
   int np = n/nproc;
   int i,j,k,l;
   int counter=0;
-  double j_total, j_start, j_end;
-  j_total = 0;
+  double t_total, t_time;
+  t_total = 0;
   double *p_loc =  new double[np];
-  double *p = new double[n ];
-  
-  
-  double *x = new double[np]; 
-  double *r = new double[np];
-
+  double *p_glb =  new double[n];
+  double *&x = x_loc;
+  double *&r = b_loc; 
   double *ap= new double[np];
-  double rnorm = 0;
-  double pap   = 0;
+  double r2norm_loc = 0, r2norm_glb = 0;
+  double pap_loc    = 0, pap_glb    = 0;
   double alpha = 0;
   double beta  = 0;
   double tmp   = 0;
-  double maxnorm=0;
   int offset = rank*np;
-  
+  double b2norm = 0; 
+
+
   for(int i=0; i<np; i++){
-    x[i]=0; ap[i]=0;
-    r[i]=b[i];
+    ap[i]=0;
+    //r[i]=b_loc[i];
     p_loc[i]=r[i];
-    rnorm+=r[i]*r[i];
-    if(fabs(r[i])>maxnorm) {
-      maxnorm = fabs(r[i]);
-    }
+    r2norm_loc+=r[i]*r[i];
+    x[i]=0;
   }
 
-  MPI_Allgather(p_loc, np, MPI_DOUBLE, p, np, MPI_DOUBLE, MPI_COMM_WORLD);
 
-  double xc=rnorm; 
-  rnorm=0;
-  MPI_Allreduce(&xc, &rnorm, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-  
-  xc = maxnorm;
-  MPI_Allreduce(&xc, &maxnorm, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+  MPI_Allreduce(&r2norm_loc, &r2norm_glb, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+  MPI_Allgather(p_loc, np, MPI_DOUBLE, p_glb, np, MPI_DOUBLE, MPI_COMM_WORLD);  
 
+  b2norm=r2norm_glb;
   int iter=0;
-  while((maxnorm>1e-6) && (iter<MAX_ITER)){
-    pap = 0;
+  while((r2norm_glb>b2norm*1e-12) && (iter<MAX_ITER)){
+    pap_loc = 0;
     //mat vec
-    j_start = omp_get_wtime();
-    for(i=0; i<np; i++){
+    //if(rank==0 && iter==cxTMP){
+    //  printf("before MATVEC:\n");
+    //  for(int i=0;i<n; i++)
+    //    printf("p[%d]=%.10f\n",i,p_glb[i]);
+    //}
+    
+    t_time = omp_get_wtime();
+    for(int i=0; i<np; i++){
       ap[i]=0;
       for(j=rbegin[i+offset]; j<rbegin[i+1+offset]; j++){
-        ap[i] += vrr[j]*p[colind[j]];
+        ap[i] += vrr[j]*p_glb[colind[j]];   //ap[i] += vrr[j]*p[colind[j]];
         counter++;
       }
-      pap+=p[offset+i]*ap[i];
+      pap_loc+=p_loc[i]*ap[i];   //pap_loc+=p[offset+i]*ap[i];
     }
-    xc = pap;
     
-    j_end = omp_get_wtime();
-    j_total+= j_end- j_start;
+    t_total+= -(t_time-=omp_get_wtime());
+    //if(rank==0 && iter==cxTMP){
+    //  printf("after MATVEC:\nrank%d iter%dAP:\n",rank,iter);
+    //  for(int i=0;i<np; i++)
+    //    printf("AP[%d]_iter%d=%f\n",i+offset, iter ,ap[i]);
+    // 
+    //}
+
+    MPI_Allreduce(&pap_loc, &pap_glb, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    //if(rank==0 && iter==cxTMP){
+    //  printf("\npAp_iter%d=%f\n",iter,pap_glb);
+    //}
+  
+    //if(rank==0 && iter==cxTMP){
+    //  printf("\nres_old_iter%d=%f\n", iter, r2norm_glb);
+    //}
+
+    alpha = r2norm_glb/pap_glb;
+    //if(rank==0 && iter==cxTMP){
+    //  printf("\nalpha_iter%d=%.30f\n",iter,alpha);
+    //}
     
-    MPI_Allreduce(&xc, &pap, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-    alpha = rnorm/pap;
-    beta  = rnorm; 
-    rnorm = 0;
-    maxnorm = 0;
-    for(i=0; i<np; i++) {
-      x[i]=x[i]+alpha*p[offset+i];
+    beta  = r2norm_glb; 
+    r2norm_loc = 0;
+    for(int i=0; i<np; i++) {
+      x[i]=x[i]+alpha*p_loc[i]; 
       r[i]=r[i]-alpha*ap[i];
-      rnorm += r[i]*r[i];
-      if( (fabs(r[i])>maxnorm)){
-        maxnorm = fabs(r[i]);
-      }
+      r2norm_loc += r[i]*r[i];
     }
-    xc=rnorm;
-    MPI_Allreduce(&xc, &rnorm, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-    xc=maxnorm;
-    MPI_Allreduce(&xc, &maxnorm, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-    beta = rnorm/beta;
-    for(i=0;i<np; i++){
+    
+    //if(rank==0 && iter==cxTMP) {
+    //  printf("rank%dxnew_iter%d:\n",rank,iter);
+    //  for(int i=0;i<np; i++)
+    //    printf("xnew[%d]=%lg\n",i, x[i]);
+    //}
+    
+    
+    MPI_Allreduce(&r2norm_loc, &r2norm_glb, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    beta = r2norm_glb/beta;
+    
+    //if(rank==0 && iter==cxTMP){
+    //  printf("\nbeta_iter%d=%f\n",iter,beta);
+    //}
+    
+
+
+    //if(rank==0 && iter==cxTMP){
+    //  printf("\nBEFOR p=r+beta*p:\n");
+    //  printf("p:\n");
+    //  for(int i=0;i<np; i++){
+    //    printf("%lg\n", p_loc[i]);
+    //  }
+    //  printf("r:\n");
+    //  for(int i=0;i<np; i++){
+    //    printf("%lg\n", r[i]);
+    //  }
+    //}
+
+
+    for(int i=0;i<np; i++){
       p_loc[i]=r[i]+beta*p_loc[i];
     }
     
-    MPI_Allgather(p_loc , np, MPI_DOUBLE, p, np, MPI_DOUBLE, MPI_COMM_WORLD);
+    //if(rank==0 && iter==cxTMP){
+    //  printf("\nAFTER p=r+beta*p:\n");
+    //  printf("pnew:\n");
+    //  for(int i=0;i<np; i++)
+    //    printf("%lg\n", p_loc[i]);
+    //}
+
+
+
+    MPI_Allgather(p_loc, np, MPI_DOUBLE, p_glb, np, MPI_DOUBLE, MPI_COMM_WORLD);  
+    
+    //if(rank==0 && iter==cxTMP){
+    //  printf("\nrank%d pnew_iter%d:\n",rank, iter);
+    //  for(int i=0;i<n; i++)
+    //    printf("pnew[%d]_iter%d=%.10f\n",i, iter, p_glb[i] );
+    //}
+      
     iter ++;
   }//END OF WHILE
   
-  MPI_Gather(x, np, MPI_DOUBLE, xout, np, MPI_DOUBLE, ROOT_ID, MPI_COMM_WORLD);
+  //MPI_Gather(x, np, MPI_DOUBLE, xout, np, MPI_DOUBLE, ROOT_ID, MPI_COMM_WORLD);
 
-  printf("rank%d t1=%f t2=%f t3=%f t4=%f t5=%f\n",rank, -t1,-t2,-t3,-t4,-t5);
-  printf("Process %d  counter=%d, iter=%d(max%d), maxnorm=%.01f\n", rank, counter, iter, MAX_ITER, maxnorm);
-  printf("total matvec time %f\n", j_total);
-
-  delete []x;
-  delete []r;
-  delete []p;
+  //printf("rank%d t1=%f t2=%f t3=%f t4=%f t5=%f\n",rank, -t1,-t2,-t3,-t4,-t5);
+  //printf("Process %d  counter=%d, iter=%d(max%d), fnorm**2=%.01f\n", rank, counter, iter, MAX_ITER, rfnorm_glb);
+  printf("Process %d  counter=%d, iter=%d(max%d) r2norm**2=%f\n", rank, counter, iter, MAX_ITER, r2norm_glb);
+  printf("total matvec time %f\n", t_total);
+  //delete []r;
+  //delete []p;
+  delete []p_glb;
   delete []ap;
   return;
 }// END OF myCG
@@ -172,14 +223,20 @@ int main(int argc, char const *argv[]){
   double *avrr  =NULL; //new double[annz]; for csr
   
   double *brr   =NULL; //new double[m];    b
-  double *b     =NULL; //new double[m/p]   local b
+  double *b_loc =NULL; //new double[m/p]   local b
   
-  double *xrr   =NULL; //*&xrr = brr ;     x
+  double *&xrr  =brr ; //*&xrr = brr ;     x
+  double *x_loc =NULL; //*&xrr = brr ;     x
   int m, annz, mrhs;   //mtx size; actual nnz; number of right hand sides
   int mp;              //m/p -> mm
 
+  double io_time=0;
   FILE *f1 = NULL;
   FILE *f2 = NULL;
+
+
+  if(rank==ROOT_ID)
+    io_time = omp_get_wtime();
 
   if(rank==FILE_A_READER_ID)
   {
@@ -264,11 +321,12 @@ int main(int argc, char const *argv[]){
   mp = m/nproc;
   if(m!=mrhs) exit(3);
 
-  if(avrr==NULL  )  avrr = new double[annz];
-  if(   b==NULL  )     b = new double[mp  ];
-  if(colind==NULL) colind= new int [annz];
-  if(rbegin==NULL) rbegin= new int [m+1 ];
-  if(xrr ==NULL  )    xrr= new double[m];
+  if(avrr  ==NULL ) avrr  = new double[annz];
+  if(colind==NULL ) colind= new int [annz];
+  if(rbegin==NULL ) rbegin= new int [m+1 ];
+  
+  if(b_loc ==NULL ) b_loc = new double[mp ];
+  if(x_loc ==NULL ) x_loc = new double[mp ];
 
   //broadcast matrix A
   MPI_Bcast  (avrr,   annz, MPI_DOUBLE, ROOT_ID, MPI_COMM_WORLD);
@@ -276,17 +334,20 @@ int main(int argc, char const *argv[]){
   MPI_Bcast  (rbegin, m+1 , MPI_INT,    ROOT_ID, MPI_COMM_WORLD);
 
   //scatter right hand side b
-  MPI_Scatter(brr, mp, MPI_DOUBLE, b, mp, MPI_DOUBLE, FILE_B_READER_ID, MPI_COMM_WORLD);
-
-  printf("rank%d arrived\n", rank);
+  MPI_Scatter(brr, mp, MPI_DOUBLE, b_loc, mp, MPI_DOUBLE, FILE_B_READER_ID, MPI_COMM_WORLD);
+  
+  fprintf(stdout,"rank%d arrived\n",rank);
+  if(rank==ROOT_ID)
+    fprintf(stdout,"file_io(preparation) takes %lg(s)\n", -(io_time-=omp_get_wtime()));
+  
   MPI_Barrier(MPI_COMM_WORLD);
   if(rank==ROOT_ID)
-    fprintf(stdout,"start count, line%0.0f\n", rtime=omp_get_wtime() );
+    fprintf(stdout,"start count, lineID%0.0f\n", rtime=omp_get_wtime() );
 
-  myCG(m, avrr, colind, rbegin, b, xrr, rank, nproc);
+  myCG(m, avrr, colind, rbegin, b_loc, x_loc, rank, nproc);
 
   if(rank==ROOT_ID)
-    fprintf(stdout,"time %f\n",-(rtime-=omp_get_wtime()));
+    fprintf(stdout,"time "ACRED"%f"ACRESET"\n",-(rtime-=omp_get_wtime()));
 
   //if(rank==ROOT_ID){
   //  printf("the result are:\n");
@@ -295,14 +356,20 @@ int main(int argc, char const *argv[]){
   //  printf("\n"); 
   //}
 
+  if(rank==0){ 
+    printf("x of rank%d\n",rank);
+    for(int i=0;i<20;i++)
+      printf("%f\n",x_loc[i]);
+    printf("\n");
+  }
 
   MPI_Finalize();
 
-  delete[] colind;
-  delete[] rbegin;
-  delete[] avrr;
-  delete[] brr;
-
+  //delete[] colind;
+  //delete[] rbegin;
+  //delete[] avrr;
+  //delete[] brr;
+  
 }
 
 
