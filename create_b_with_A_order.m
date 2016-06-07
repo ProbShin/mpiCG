@@ -1,5 +1,5 @@
-A = mmread('../../cfd2/cfd2_E16/cfd2_aug16.mtx');
-ix = load('../../cfd2/cfd2_E16/cfd2_aug16.metis.iperm'); 
+A = mmread('../../Emilia/Emilia_923.mtx');
+ix = load('../../Emilia/Emilia_923.metis.iperm'); 
 p=16;
 [m,~] = size(A);
 U=ones(m,1);
@@ -9,7 +9,7 @@ for i=1:1:p
 end
 U(ix)=U;
 b=A*U;
-mmwrite('b_cfd2_aug16_order.mtx', b);
+mmwrite('b_Emilia_order.mtx', b);
 
 
 

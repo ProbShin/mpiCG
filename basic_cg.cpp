@@ -76,7 +76,7 @@ void myCG(int n, double* vrr, int* colind, int* rbegin, double *b_loc, double*x_
 
   b2norm=r2norm_glb;
   int iter=0;
-  while((r2norm_glb>b2norm*1e-10) && (iter<MAX_ITER)){
+  while((sqrt(r2norm_glb/b2norm)>1e-07) && (iter<MAX_ITER)){
     
     pap_loc = 0;
 
@@ -185,7 +185,7 @@ void myCG(int n, double* vrr, int* colind, int* rbegin, double *b_loc, double*x_
 
   //printf("rank%d t1=%f t2=%f t3=%f t4=%f t5=%f\n",rank, -t1,-t2,-t3,-t4,-t5);
   //printf("Process %d  counter=%d, iter=%d(max%d), fnorm**2=%.01f\n", rank, counter, iter, MAX_ITER, rfnorm_glb);
-  printf("Process %d, iter=%d(max%d) (r2norm/b2norm)**2=%lg\n", rank, iter, MAX_ITER, r2norm_glb/b2norm);
+  printf("Process %d, iter=%d(max%d) rtol=%lg\n", rank, iter, MAX_ITER, sqrt(r2norm_glb/b2norm));
   printf("total matvec time %f\n", t_total);
   //delete []r;
   //delete []p;
@@ -358,12 +358,12 @@ int main(int argc, char const *argv[]){
   //  printf("\n"); 
   //}
 
-  if(rank==0){ 
+  /*if(rank==0){ 
     printf("x of rank%d\n",rank);
     for(int i=0;i<20;i++)
       printf("%f\n",x_loc[i]);
     printf("\n");
-  }
+  }*/
 
   MPI_Finalize();
 

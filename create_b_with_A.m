@@ -1,9 +1,9 @@
-A = mmread('../../Emilia/Emilia_923_order.mtx');
+A = mmread('../../Geo/Geo_1438.mtx');
 [m,~] = size(A);
 U=ones(m,1);
 
 b=A*U;
-mmwrite('b_Emilia_order.mtx', b);
+mmwrite('b_Geo.mtx', b);
 
 
 
